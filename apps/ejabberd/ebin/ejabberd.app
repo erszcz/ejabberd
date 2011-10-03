@@ -116,6 +116,8 @@
              mod_pubsub,
              mod_pubsub_odbc,
              mod_register,
+             mod_register_mnesia,
+             mod_register_riak,
              mod_register_web,
              mod_roster,
              mod_roster_odbc,

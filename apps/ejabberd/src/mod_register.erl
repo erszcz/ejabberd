@@ -34,10 +34,18 @@
 	 stream_feature_register/2,
 	 unauthenticated_iq_register/4,
 	 try_register/5,
-	 process_iq/3]).
+	 process_iq/3,
+	 clean_treap/2]).
 
--include("ejabberd.hrl").
--include("jlib.hrl").
+-include("mod_offline.hrl").
+
+check_timeout_storage(Source, Priority, CleanPriority) ->
+    ?DISPATCH(check_timeout_storage, [Source, Priority, CleanPriority]).
+
+
+remove_timeout_storage(Source) ->
+    ?DISPATCH(remove_timeout_storage, [Source]).
+
 
 start(Host, Opts) ->
     IQDisc = gen_mod:get_opt(iqdisc, Opts, one_queue),
@@ -432,35 +440,16 @@ check_timeout(Source) ->
 	    {MSec, Sec, _USec} = now(),
 	    Priority = -(MSec * 1000000 + Sec),
 	    CleanPriority = Priority + Timeout,
-	    F = fun() ->
-			Treap = case mnesia:read(mod_register_ip, treap,
-						 write) of
-				    [] ->
-					treap:empty();
-				    [{mod_register_ip, treap, T}] -> T
-				end,
-			Treap1 = clean_treap(Treap, CleanPriority),
-			case treap:lookup(Source, Treap1) of
-			    error ->
-				Treap2 = treap:insert(Source, Priority, [],
-						      Treap1),
-				mnesia:write({mod_register_ip, treap, Treap2}),
-				true;
-			    {ok, _, _} ->
-				mnesia:write({mod_register_ip, treap, Treap1}),
-				false
-			end
-		end,
-	    case mnesia:transaction(F) of
-		{atomic, Res} ->
-		    Res;
-		{aborted, Reason} ->
-		    ?ERROR_MSG("mod_register: timeout check error: ~p~n",
-			       [Reason]),
-		    true
-	    end;
+		case check_timeout_storage(Source, Priority, CleanPriority) of
+			ok ->
+				ok;
+			{error, Reason} ->
+				?ERROR_MSG("mod_register: timeout check error: ~p~n",
+					[Reason]),
+				true
+		end;
 	true ->
-	    true
+	    ok
     end.
 
 clean_treap(Treap, CleanPriority) ->
@@ -486,26 +475,15 @@ remove_timeout(Source) ->
 	      end,
     if
 	is_integer(Timeout) ->
-	    F = fun() ->
-			Treap = case mnesia:read(mod_register_ip, treap,
-						 write) of
-				    [] ->
-					treap:empty();
-				    [{mod_register_ip, treap, T}] -> T
-				end,
-			Treap1 = treap:delete(Source, Treap),
-			mnesia:write({mod_register_ip, treap, Treap1}),
-			ok
-		end,
-	    case mnesia:transaction(F) of
-		{atomic, ok} ->
-		    ok;
-		{aborted, Reason} ->
-		    ?ERROR_MSG("mod_register: timeout remove error: ~p~n",
+		case remove_timeout_storage(Source) of	
+			ok ->
+				ok;
+			{error, Reason} ->
+				?ERROR_MSG("mod_register: timeout check error: ~p~n",
 			       [Reason]),
-		    ok
-	    end;
-	true ->
+				true
+		end;
+	true ->	
 	    ok
     end.
 
