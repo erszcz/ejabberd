@@ -4,6 +4,9 @@
 
 -define(REGISTER_BUCKET, <<"register">>).
 
+create_table() -> 
+	ok.
+
 check_timeout_storage(Source, Priority, CleanPriority) ->
 	Treap = case get_treap() of
 			    {ok, []} ->

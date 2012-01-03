@@ -2,6 +2,13 @@
 
 -compile([export_all]).
 
+create_table() ->
+    mnesia:create_table(mod_register_ip,
+			[{ram_copies, [node()]},
+			 {local_content, true},
+			 {attributes, [key, value]}]),
+    mnesia:add_table_copy(mod_register_ip, node(), ram_copies).
+
 check_timeout_storage(Source, Priority, CleanPriority) ->
 	F = fun() ->
 		Treap = case mnesia:read(mod_register_ip, treap,
