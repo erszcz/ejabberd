@@ -20,6 +20,9 @@ dispatch(Module, Backend, Function, Args) ->
     apply(module_to_bmodule(Module, Backend), Function, Args).
 
 %% Get DB backend per Host/Module combination.
+get(_Host, ejabberd_sm) ->
+    {Backend, Opts} = ejabberd_config:get_global_option(sm_backend),
+    Backend;
 get(Host, Module) ->
     {Module, Options} = proplists:lookup(Module,
         ejabberd_config:get_local_option({modules, Host})),
@@ -28,7 +31,7 @@ get(Host, Module) ->
                                 Backend =:= odbc;
                                 Backend =:= riak ->
             Backend;
-        _ -> none
+        _ -> undefined
     end.
 
 %% load(some_mod, some_atom) compiles and loads into the VM a module with
