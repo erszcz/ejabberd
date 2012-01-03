@@ -440,6 +440,8 @@ process_term(Term, State) ->
             State;
         {max_fsm_queue, N} ->
             add_option(max_fsm_queue, N, State);
+        {sm_backend, Val} ->
+            add_option(sm_backend, Val, State);
         {_Opt, _Val} ->
             lists:foldl(fun(Host, S) -> process_host_term(Term, Host, S) end,
                         State, State#state.hosts)
@@ -473,6 +475,8 @@ add_option(Opt, Val, State) ->
                 hosts ->
                     config;
                 language ->
+                    config;
+                sm_backend ->
                     config;
                 _ ->
                     local_config
