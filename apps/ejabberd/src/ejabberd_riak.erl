@@ -7,7 +7,8 @@
          delete/1,
          delete/2,
          list_keys/1,
-         mapred_bucket/2]).
+         mapred_bucket/2,
+         collect/3]).
 
 -include("ejabberd.hrl").
 
@@ -59,6 +60,32 @@ foreach(F, Bucket) ->
         Error ->
             Error
     end.
+
+%% Perform operation for each key in bucket.
+%% F = fun(RiakWorker::pid(), BinaryKey::binary(), Acc::any()).
+-spec collect(fun(), any(), binary()) -> any().
+collect(F, Acc0, Bucket) ->
+    case riakc_pb_socket:list_keys(get_worker(), Bucket) of
+        {ok, BinKeys} ->
+            lists:foldl(fun(Key, Acc) ->
+                            F(get_worker(), Key, Acc)
+                        end,
+                        Acc0,
+                        BinKeys);
+        Error ->
+            Error
+    end.
+
+%% collect usage example (for values being stringified integers):
+%   F = fun(_,E,A) ->
+%           case ejabberd_riak:get(<<"test">>, E) of
+%               {ok,V} ->
+%                   list_to_integer(V) + A;
+%               _ ->
+%                   A
+%           end
+%   end,
+%   ejabberd_riak:collect(F, 0, <<"test">>).
 
 %% Delete whole bucket.
 %% TODO: I feel it's far from elegant.

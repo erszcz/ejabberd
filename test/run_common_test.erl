@@ -29,8 +29,8 @@ ct() ->
         %, {testcase, block_jid_all}
 
         , {suite, "login_SUITE"}
-        , {group, [messages]}
-        , {testcase, messages_story}
+ %       , {group, [messages]}
+%        , {testcase, messages_story}
 
         %, {suite, "offline_SUITE"}
 
