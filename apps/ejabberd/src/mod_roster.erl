@@ -63,7 +63,8 @@
 	 process_item_set_t/3,
 	 out_state_change/3,
 	 in_auto_reply/3,
-	 in_state_change/3]).
+	 in_state_change/3,
+	 roster_version_on_db/1]).
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").

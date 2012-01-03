@@ -42,7 +42,7 @@ get_session(User, Server, Resource) ->
     {ok, Session} = ejabberd_riak:get(?SESSION_BUCKET, {User, Server}),
     case lists:keyfind({User, Server, Resource}, #session.usr, Session) of
         false ->
-            {error, notfound};
+            [];
         SessionItem ->
             [SessionItem]
     end.
@@ -50,7 +50,7 @@ get_session(User, Server, Resource) ->
 get_session(User, Server) ->
     case ejabberd_riak:get(?SESSION_BUCKET, {User, Server}) of
         {ok, Session} ->
-            [Session];
+            Session;
         _ ->
             []
     end.
