@@ -15,19 +15,28 @@ create_table() ->
 cleanup(_Node) -> 
 	ok.
 
-read_session_storage(SID) ->
-   F = fun(_, US, A) ->
-           {ok, Session} = ejabberd_riak:get(?SESSION_BUCKET, US),
-           case lists:keyfind(SID, #session.sid, Session) of
-               false ->
-                   A;
-               SessionItem ->
-                   [SessionItem | A]
-                   
-           end
-   end,
+%read_session_storage(SID) ->
+    %F = fun(_, US, Acc) ->
+        %{ok, Session} = ejabberd_riak:get(?SESSION_BUCKET, US),
+        %case lists:keyfind(SID, #session.sid, Session) of
+            %false ->
+                %Acc;
+            %SessionItem ->
+                %[SessionItem | Acc]
 
-   ejabberd_riak:collect(F, [], ?SESSION_BUCKET).
+        %end
+    %end,
+
+    %ejabberd_riak:collect(F, [], ?SESSION_BUCKET).
+
+read_session_storage(SID) ->
+    case ejabberd_riak:mapred(?SESSION_BUCKET,
+            [re_mapred:read_session_map(SID, false)]) of
+        {ok, []} ->
+            [];
+        {ok, L} ->
+            lists:map(fun({_,S}) -> S end, L)
+    end.
 
 delete_session_storage(SID, _Server) ->
     Sessions = read_session_storage(SID),

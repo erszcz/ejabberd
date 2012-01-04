@@ -7,7 +7,7 @@
          delete/1,
          delete/2,
          list_keys/1,
-         mapred_bucket/2,
+         mapred/2,
          collect/3]).
 
 -include("ejabberd.hrl").
@@ -110,9 +110,9 @@ list_keys(Bucket) ->
             Error
     end.
 
--spec mapred_bucket(binary(), list()) -> any().
-mapred_bucket(Bucket, Query) ->
-    riakc_pb_socket:mapred_bucket(get_worker(), Bucket, Query).
+-spec mapred(term(), list()) -> any().
+mapred(Inputs, Query) ->
+    riakc_pb_socket:mapred(get_worker(), Inputs, Query).
 
 get_host() ->
     get_config(riak_host, "127.0.0.1").
