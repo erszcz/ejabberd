@@ -25,7 +25,12 @@ create_table() ->
 %% Delete single roster element
 delete_item(LUser, LServer, LJID) ->
     US = {LUser, LServer},
-    {ok, Roster} = ejabberd_riak:get(?ROSTER_BUCKET, US),
+    Roster = case ejabberd_riak:get(?ROSTER_BUCKET, US) of
+        {ok, R} ->
+            R;
+        {error, notfound} ->
+            []
+    end,
     ejabberd_riak:set(?ROSTER_BUCKET, US,
         lists:keydelete(LJID, #roster.jid, Roster)).
 
@@ -53,7 +58,12 @@ read_roster_version_storage(US) ->
     Version.
 
 write_to_roster_storage(Rec = #roster{us=US, jid=LJID}) ->
-    {ok, Roster} = ejabberd_riak:get(?ROSTER_BUCKET, US),
+    Roster = case ejabberd_riak:get(?ROSTER_BUCKET, US) of
+        {ok, R} ->
+            R;
+        {error, notfound} ->
+            []
+    end,
     ejabberd_riak:set(?ROSTER_BUCKET, US,
         lists:keystore(LJID, #roster.jid, Roster, Rec)).
 
@@ -63,14 +73,19 @@ write_to_roster_version_storage(Rec = #roster_version{us=US}) ->
 read_user_roster(US) ->
     case ejabberd_riak:get(?ROSTER_BUCKET, US) of
         {ok, Roster} ->
-            [Roster];
+            Roster;
         _ ->
             []
     end.
 
 read_roster({LUser, LServer, LJID}) ->
     US = {LUser, LServer},
-    {ok, Roster} = ejabberd_riak:get(?ROSTER_BUCKET, US),
+    Roster = case ejabberd_riak:get(?ROSTER_BUCKET, US) of
+        {ok, R} ->
+            R;
+        {error, notfound} ->
+            []
+    end,
     case lists:keyfind(LJID, #roster.jid, Roster) of
         false ->
             {error, notfound};
@@ -80,7 +95,12 @@ read_roster({LUser, LServer, LJID}) ->
 
 process_item_set_storage(Attrs, Els, _User, JID, LUser, LServer, LJID) ->
     US = {LUser, LServer},
-    {ok, Roster} = ejabberd_riak:get(?ROSTER_BUCKET, US),
+    Roster = case ejabberd_riak:get(?ROSTER_BUCKET, US) of
+        {ok, R} ->
+            R;
+        {error, notfound} ->
+            []
+    end,
     Item = case lists:keyfind(LJID, #roster.jid, Roster) of
         false ->
             #roster{usj = {LUser, LServer, LJID},
@@ -117,7 +137,12 @@ process_item_set_storage(Attrs, Els, _User, JID, LUser, LServer, LJID) ->
 
 process_subscription_storage(Direction, Type, Reason, JID1, US, LUser, LServer, LJID) ->
     US = {LUser, LServer},
-    {ok, Roster} = ejabberd_riak:get(?ROSTER_BUCKET, US),
+    Roster = case ejabberd_riak:get(?ROSTER_BUCKET, US) of
+        {ok, R} ->
+            R;
+        {error, notfound} ->
+            []
+    end,
     Item = case lists:keyfind(LJID, #roster.jid, Roster) of
         false ->
             JID = {JID1#jid.user,
