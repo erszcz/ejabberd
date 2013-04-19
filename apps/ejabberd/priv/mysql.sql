@@ -223,3 +223,37 @@ CREATE TABLE pubsub_subscription_opt (
   opt_value text
 );
 CREATE UNIQUE INDEX i_pubsub_subscription_opt ON pubsub_subscription_opt(subid(32), opt_name(32));
+
+
+CREATE TABLE mam_message(
+  -- Message UID
+  -- A server-assigned UID that MUST be unique within the archive.
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  local_username varchar(250) NOT NULL,
+  from_jid varchar(250) NOT NULL,
+  -- The remote JID that the stanza is to (for an outgoing message) or from (for an incoming message).
+  remote_bare_jid varchar(250) NOT NULL,
+  remote_resource varchar(250) NOT NULL,
+  -- I - incoming, remote_jid is a value from From.
+  -- O - outgoing, remote_jid is a value from To.
+  direction character(1) NOT NULL,
+  -- A timestamp of when the message was sent (for an outgoing message) or received (for an incoming message).
+  -- added_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  added_at int NOT NULL,
+  -- Term-encoded message
+  message blob NOT NULL
+);
+CREATE INDEX i_mam_message_username_added_at USING BTREE ON mam_message(local_username, added_at);
+CREATE INDEX i_mam_message_username_jid_added_at USING BTREE ON mam_message(local_username, remote_bare_jid, added_at);
+
+
+CREATE TABLE mam_config(
+  local_username varchar(250) NOT NULL,
+  -- If empty, than it is a default behaviour.
+  remote_jid varchar(250) NOT NULL,
+  -- A - always archive;
+  -- N - newer archive;
+  -- R - roster (only for remote_jid == "")
+  behaviour character(1) NOT NULL
+);
+CREATE INDEX i_mam_config USING HASH ON mam_config(local_username, remote_jid);
