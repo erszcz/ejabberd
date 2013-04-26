@@ -25,23 +25,27 @@
 -type elem() :: #xmlelement{}.
 -type jid() :: tuple().
 
+
+%% ----------------------------------------------------------------------
+%% Other types
+-type filter() :: iolist().
+-type escaped_message_id() :: binary().
+
 %% ----------------------------------------------------------------------
 %% Constants
 
-mam_ns_string() ->
-    "urn:xmpp:mam:tmp".
+mam_ns_string() -> "urn:xmpp:mam:tmp".
 
-mam_ns_binary() ->
-    <<"urn:xmpp:mam:tmp">>.
+mam_ns_binary() -> <<"urn:xmpp:mam:tmp">>.
 
-default_result_limit() ->
-    50.
+rsm_ns_binary() -> <<"http://jabber.org/protocol/rsm">>.
+
+default_result_limit() -> 50.
+
+max_result_limit() -> 50.
 
 encode_direction(incoming) -> "I";
 encode_direction(outgoing) -> "O".
-
-decode_direction("I") -> incoming;
-decode_direction("O") -> outgoing.
 
 %% ----------------------------------------------------------------------
 %% gen_mod callbacks
@@ -84,6 +88,13 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
     %% Start :: integer() | undefined
     Start = maybe_unix_timestamp(xml:get_path_s(QueryEl, [{elem, <<"start">>}, cdata])),
     End   = maybe_unix_timestamp(xml:get_path_s(QueryEl, [{elem, <<"end">>}, cdata])),
+    RSM   = jlib:rsm_decode(QueryEl),
+    %% #rsm_in{
+    %%    max = non_neg_integer() | undefined,
+    %%    direction = before | aft | undefined,
+    %%    %% id is empty, if cdata does not exists.
+    %%    id = binary() | undefined,
+    %%    index = non_neg_integer() | undefined}
     %% Filtering by contact.
     With  = xml:get_path_s(QueryEl, [{elem, <<"with">>}, cdata]),
     {WithSJID, WithSResource} =
@@ -98,22 +109,37 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
     end,
     %% This element's name is "limit".
     %% But it must be "max" according XEP-0313.
-    Max   = maybe_integer(get_one_of_path_bin(QueryEl, [
+    PageSize = min(max_result_limit(),
+                   maybe_integer(get_one_of_path_bin(QueryEl, [
                     [{elem, <<"set">>}, {elem, <<"max">>}, cdata],
                     [{elem, <<"set">>}, {elem, <<"limit">>}, cdata]
-                    ]), default_result_limit()),
-    ?INFO_MSG("Parsed data~n\tStart ~p~n\tEnd ~p~n\tQueryId ~p~n\tMax ~p~n"
-              "\tWithSJID ~p~n\tWithSResource ~p~n",
-              [Start, End, QueryID, Max, WithSJID, WithSResource]),
+                   ]), default_result_limit())),
+
+
+    ?INFO_MSG("Parsed data~n\tStart ~p~n\tEnd ~p~n\tQueryId ~p~n\tPageSize ~p~n"
+              "\tWithSJID ~p~n\tWithSResource ~p~n\tRSM: ~p~n",
+              [Start, End, QueryID, PageSize, WithSJID, WithSResource, RSM]),
     SUser = ejabberd_odbc:escape(LUser),
-    {selected, _ColumnNames, MessageRows} =
-    extract_messages(LServer, SUser, Start, End, Max, WithSJID, WithSResource),
+    Filter = prepare_filter(SUser, Start, End, WithSJID, WithSResource),
+    TotalCount = calc_count(LServer, Filter),
+    Offset     = calc_offset(LServer, Filter, PageSize, TotalCount, RSM),
+    ?INFO_MSG("RSM info: ~nTotal count: ~p~nOffset: ~p~n",
+              [TotalCount, Offset]),
+    MessageRows = extract_messages(LServer, Filter, Offset, PageSize),
+    {FirstId, LastId} =
+        case MessageRows of
+            []    -> {undefined, undefined};
+            [_|_] -> {message_row_to_id(hd(MessageRows)),
+                      message_row_to_id(lists:last(MessageRows))}
+        end,
     [send_message(To, From, message_row_to_xml(M, QueryID))
      || M <- MessageRows],
+    ResultSetEl = result_set(FirstId, LastId, Offset, TotalCount),
+    ResultQueryEl = result_query(ResultSetEl),
     %% On receiving the query, the server pushes to the client a series of
     %% messages from the archive that match the client's given criteria,
     %% and finally returns the <iq/> result.
-    IQ#iq{type = result, sub_el = []}.
+    IQ#iq{type = result, sub_el = [ResultQueryEl]}.
 
 
 %% @doc Handle an outgoing message.
@@ -196,6 +222,7 @@ is_complete_message(Packet=#xmlelement{name = <<"message">>}) ->
             false -> false;
             _     -> true
         end;
+    %% Skip <<"error">> type
     _ -> false
     end;
 is_complete_message(_) -> false.
@@ -223,6 +250,7 @@ delay(DateTime, FromJID) ->
     jlib:timestamp_to_xml(DateTime, utc, FromJID, <<>>).
 
 
+%% @doc This element will be added in each forwarded message.
 result(QueryID, MessageUID) ->
     %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
     #xmlelement{
@@ -232,12 +260,38 @@ result(QueryID, MessageUID) ->
                  {<<"id">>, MessageUID}],
         children = []}.
 
-example_mess() ->
-    {xmlelement,<<"message">>,
-     [{<<"xml:lang">>,<<"en">>},{<<"to">>,<<"bob@localhost/res1">>},{<<"type">>,<<"chat">>}],
-     [{xmlelement,<<"body">>,[],
-     [{xmlcdata,<<"OH, HAI!">>}]}]}.
 
+%% @doc This element will be added into "iq/query".
+-spec result_set(FirstId, LastId, FirstIndexI, CountI) -> elem() when
+    FirstId :: binary() | undefined,
+    LastId  :: binary() | undefined,
+    FirstIndexI :: non_neg_integer() | undefined,
+    CountI      :: non_neg_integer().
+result_set(FirstId, LastId, FirstIndexI, CountI) ->
+    %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
+    FirstEl = [#xmlelement{name = <<"first">>,
+                           attrs = [{<<"index">>, integer_to_list(FirstIndexI)}],
+                           children = [{xmlcdata, FirstId}]
+                          }
+               || FirstId =/= undefined],
+    LastEl = [#xmlelement{name = <<"last">>,
+                           attrs = [],
+                           children = [{xmlcdata, LastId}]
+                          }
+               || LastId =/= undefined],
+    CountEl = #xmlelement{
+            name = <<"count">>,
+            children = [{xmlcdata, integer_to_list(CountI)}]},
+     #xmlelement{
+        name = <<"set">>,
+        attrs = [{<<"xmlns">>, rsm_ns_binary()}],
+        children = FirstEl ++ LastEl ++ [CountEl]}.
+
+result_query(SetEl) ->
+     #xmlelement{
+        name = <<"query">>,
+        attrs = [{<<"xmlns">>, mam_ns_binary()}],
+        children = [SetEl]}.
 
 
 send_message(From, To, Mess) ->
@@ -317,48 +371,142 @@ message_row_to_xml({BUID,BSeconds,BFromJID,BPacket}, QueryID) ->
     DateTime = calendar:now_to_universal_time(seconds_to_now(Seconds)),
     wrap_message(Packet, QueryID, BUID, DateTime, FromJID).
 
+message_row_to_id({BUID,_,_,_}) ->
+    BUID.
+
 %% Each record is a tuple of form 
 %% `{<<"3">>,<<"1366312523">>,<<"bob@localhost">>,<<"res1">>,<<binary>>}'.
 %% Columns are `["id","added_at","from_jid","message"]'.
--spec extract_messages(LServer, SUser, IStart, IEnd, IMax, WithSJID, WithSResource) ->
-    Result when
+-spec extract_messages(LServer, Filter, IOffset, IMax) ->
+    [Record] when
     LServer :: server_hostname(),
-    SUser   :: escaped_username(),
-    IStart  :: unix_timestamp() | undefined,
-    IEnd    :: unix_timestamp() | undefined,
+    Filter  :: filter(),
+    IOffset :: non_neg_integer(),
     IMax    :: pos_integer(),
-    WithSJID :: escaped_jid(),
-    WithSResource :: escaped_resource(),
-    Result :: {selected,[ColumnName],[Record]},
-    ColumnName :: string(),
     Record :: tuple().
-extract_messages(LServer, SUser, IStart, IEnd, IMax, WithSJID, WithSResource) ->
-    Result =
+extract_messages(_LServer, _Filter, _IOffset, 0) ->
+    [];
+extract_messages(LServer, Filter, IOffset, IMax) ->
+    {selected, _ColumnNames, MessageRows} =
     ejabberd_odbc:sql_query(
       LServer,
       ["SELECT id, added_at, from_jid, message "
-       "FROM mam_message "
-       "WHERE local_username='", SUser, "'",
-         case IStart of
-            undefined -> "";
-            _         -> [" AND added_at >= ", integer_to_list(IStart)]
-         end,
-         case IEnd of
-            undefined -> "";
-            _         -> [" AND added_at <= ", integer_to_list(IEnd)]
-         end,
-         case WithSJID of
-            undefined -> "";
-            _         -> [" AND remote_bare_jid = ", WithSJID]
-         end,
-         case WithSResource of
-            undefined -> "";
-            _         -> [" AND remote_resource = ", WithSResource]
-         end,
+       "FROM mam_message ",
+        Filter,
        " ORDER BY added_at"
-       " LIMIT ", integer_to_list(IMax)]),
-    ?INFO_MSG("query_behaviour query returns ~p", [Result]),
-    Result.
+       " LIMIT ",
+         case IOffset of
+             0 -> "";
+             _ -> [integer_to_list(IOffset), ", "]
+         end,
+         integer_to_list(IMax)]),
+    ?INFO_MSG("extract_messages query returns ~p", [MessageRows]),
+    MessageRows.
+
+    %% #rsm_in{
+    %%    max = non_neg_integer() | undefined,
+    %%    direction = before | aft | undefined,
+    %%    id = binary() | undefined,
+    %%    index = non_neg_integer() | undefined}
+-spec calc_offset(LServer, Filter, PageSize, TotalCount, RSM) -> Offset
+    when
+    LServer  :: server_hostname(),
+    Filter   :: filter(),
+    PageSize :: non_neg_integer(),
+    TotalCount :: non_neg_integer(),
+    RSM      :: #rsm_in{},
+    Offset   :: non_neg_integer().
+calc_offset(_LS, _F, _PS, _TC, #rsm_in{direction = undefined, index = Index})
+    when is_integer(Index) ->
+    Index;
+%% Requesting the Last Page in a Result Set
+calc_offset(_LS, _F, PS, TC, #rsm_in{direction = before, id = <<>>}) ->
+    max(0, TC - PS);
+calc_offset(LServer, Filter, PageSize, _TC, #rsm_in{direction = before, id = ID})
+    when is_binary(ID) ->
+    SID = ejabberd_odbc:escape(ID),
+    max(0, calc_before(LServer, Filter, SID) - PageSize);
+calc_offset(LServer, Filter, _PS, _TC, #rsm_in{direction = aft, id = ID})
+    when is_binary(ID), byte_size(ID) > 0 ->
+    SID = ejabberd_odbc:escape(ID),
+    calc_index(LServer, Filter, SID);
+calc_offset(_LS, _F, _PS, _TC, _RSM) ->
+    0.
+
+%% Zero-based index of the row with UID in the result test.
+%% If the element does not exists, the ID of the next element will
+%% be returned instead.
+%% "SELECT COUNT(*) as "index" FROM mam_message WHERE id <= '",  UID
+-spec calc_index(LServer, Filter, SUID) -> Count
+    when
+    LServer  :: server_hostname(),
+    Filter   :: filter(),
+    SUID     :: escaped_message_id(),
+    Count    :: non_neg_integer().
+calc_index(LServer, Filter, SUID) ->
+    {selected, _ColumnNames, [{BIndex}]} =
+    ejabberd_odbc:sql_query(
+      LServer,
+      ["SELECT COUNT(*) FROM mam_message ", Filter, " AND id <= '", SUID, "'"]),
+    list_to_integer(binary_to_list(BIndex)).
+
+%% @doc Count of elements in RSet before the passed element.
+%% The element with the passed UID can be already deleted.
+%% "SELECT COUNT(*) as "count" FROM mam_message WHERE id < '",  UID
+-spec calc_before(LServer, Filter, SUID) -> Count
+    when
+    LServer  :: server_hostname(),
+    Filter   :: filter(),
+    SUID     :: escaped_message_id(),
+    Count    :: non_neg_integer().
+calc_before(LServer, Filter, SUID) ->
+    {selected, _ColumnNames, [{BIndex}]} =
+    ejabberd_odbc:sql_query(
+      LServer,
+      ["SELECT COUNT(*) FROM mam_message ", Filter, " AND id < '", SUID, "'"]),
+    list_to_integer(binary_to_list(BIndex)).
+
+
+%% @doc Get the total result set size.
+%% "SELECT COUNT(*) as "count" FROM mam_message WHERE "
+-spec calc_count(LServer, Filter) -> Count
+    when
+    LServer  :: server_hostname(),
+    Filter   :: filter(),
+    Count    :: non_neg_integer().
+calc_count(LServer, Filter) ->
+    {selected, _ColumnNames, [{BCount}]} =
+    ejabberd_odbc:sql_query(
+      LServer,
+      ["SELECT COUNT(*) FROM mam_message ", Filter]),
+    list_to_integer(binary_to_list(BCount)).
+
+
+-spec prepare_filter(SUser, IStart, IEnd, WithSJID, WithSResource) -> filter()
+    when
+    SUser   :: escaped_username(),
+    IStart  :: unix_timestamp() | undefined,
+    IEnd    :: unix_timestamp() | undefined,
+    WithSJID :: escaped_jid(),
+    WithSResource :: escaped_resource().
+prepare_filter(SUser, IStart, IEnd, WithSJID, WithSResource) ->
+   ["WHERE local_username='", SUser, "'",
+     case IStart of
+        undefined -> "";
+        _         -> [" AND added_at >= ", integer_to_list(IStart)]
+     end,
+     case IEnd of
+        undefined -> "";
+        _         -> [" AND added_at <= ", integer_to_list(IEnd)]
+     end,
+     case WithSJID of
+        undefined -> "";
+        _         -> [" AND remote_bare_jid = '", WithSJID, "'"]
+     end,
+     case WithSResource of
+        undefined -> "";
+        _         -> [" AND remote_resource = '", WithSResource, "'"]
+     end].
 
 
 %% "maybe" means, that the function may return 'undefined'.
