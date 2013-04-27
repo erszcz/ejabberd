@@ -47,6 +47,10 @@ max_result_limit() -> 50.
 encode_direction(incoming) -> "I";
 encode_direction(outgoing) -> "O".
 
+encode_behaviour(<<"roster">>) -> "R";
+encode_behaviour(<<"always">>) -> "A";
+encode_behaviour(<<"newer">>)  -> "N".
+
 %% ----------------------------------------------------------------------
 %% gen_mod callbacks
 
@@ -77,6 +81,19 @@ stop(Host) ->
 %% to the user on their bare JID (i.e. `From.luser'),
 %% while a MUC service might allow MAM queries to be sent to the room's bare JID
 %% (i.e `To.luser').
+process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
+               _To,
+               IQ=#iq{type = set,
+                      sub_el = PrefsEl = #xmlelement{name = <<"prefs">>}}) ->
+    ?INFO_MSG("Handling mam prefs IQ~n    from ~p ~n    packet ~p.",
+              [From, IQ]),
+    {DefaultMode, AlwaysJIDs, NewerJIDs} = parse_prefs(PrefsEl),
+    ?INFO_MSG("Parsed data~n\tDefaultMode ~p~n\tAlwaysJIDs ~p~n\tNewerJIDS ~p~n",
+              [DefaultMode, AlwaysJIDs, NewerJIDs]),
+    update_settings(LServer, LUser, DefaultMode, AlwaysJIDs, NewerJIDs),
+    ResultPrefsEl = result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs),
+    IQ#iq{type = result, sub_el = [ResultPrefsEl]};
+    
 process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
                To,
                IQ=#iq{type = get,
@@ -293,6 +310,45 @@ result_query(SetEl) ->
         attrs = [{<<"xmlns">>, mam_ns_binary()}],
         children = [SetEl]}.
 
+-spec result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs) -> ResultPrefsEl when
+    DefaultMode :: binary(),
+    AlwaysJIDs  :: [binary()],
+    NewerJIDs   :: [binary()],
+    ResultPrefsEl :: elem().
+result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    AlwaysEl = #xmlelement{name = <<"always">>,
+                           children = encode_jids(AlwaysJIDs)},
+    NewerEl  = #xmlelement{name = <<"newer">>,
+                           children = encode_jids(NewerJIDs)},
+    #xmlelement{
+       name = <<"prefs">>,
+       attrs = [{<<"xmlns">>,mam_ns_binary()}, {<<"default">>, DefaultMode}],
+       children = [AlwaysEl, NewerEl]
+    }.
+
+encode_jids(JIDs) ->
+    [#xmlelement{name = <<"jid">>,
+                 children = [#xmlcdata{content = JID}]}
+     || JID <- JIDs].
+
+
+-spec parse_prefs(PrefsEl) -> {DefaultMode, AlwaysJIDs, NewerJIDs} when
+    PrefsEl :: elem(),
+    DefaultMode :: binary(),
+    AlwaysJIDs  :: [binary()],
+    NewerJIDs   :: [binary()].
+parse_prefs(El=#xmlelement{name = <<"prefs">>, attrs = Attrs}) ->
+    {value, Default} = xml:get_attr(<<"default">>, Attrs),
+    AlwaysJIDs = parse_jid_list(El, <<"always">>),
+    NewerJIDs  = parse_jid_list(El, <<"newer">>),
+    {Default, AlwaysJIDs, NewerJIDs}.
+
+parse_jid_list(El, Name) ->
+    case xml:get_subtag(El, Name) of
+        false -> [];
+        #xmlelement{children = JIDEls} ->
+            [xml:get_tag_cdata(JIDEl) || JIDEl <- JIDEls]
+    end.
 
 send_message(From, To, Mess) ->
     ejabberd_sm:route(From, To, Mess).
@@ -334,6 +390,35 @@ query_behaviour(LServer, SUser, SJID, BareSJID) ->
        "LIMIT 1"]),
     ?INFO_MSG("query_behaviour query returns ~p", [Result]),
     Result.
+
+update_settings(LServer, LUser, DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    SUser = ejabberd_odbc:escape(LUser),
+    DelQuery = ["DELETE FROM mam_config WHERE local_username = '", SUser, "'"],
+    InsQuery = ["INSERT INTO mam_config(local_username, remote_jid, behaviour) "
+       "VALUES ", encode_first_config_row(SUser, encode_behaviour(DefaultMode), ""),
+       [encode_config_row(SUser, "A", ejabberd_odbc:escape(JID))
+        || JID <- AlwaysJIDs],
+       [encode_config_row(SUser, "N", ejabberd_odbc:escape(JID))
+        || JID <- NewerJIDs]],
+    %% Run as a transaction
+    {atomic, [DelResult, InsResult]} =
+        sql_transaction_map(LServer, [DelQuery, InsQuery]),
+    ?INFO_MSG("update_settings query returns ~p and ~p", [DelResult, InsResult]),
+    ok.
+
+encode_first_config_row(SUser, SBehavour, SJID) ->
+    ["('", SUser, "', '", SBehavour, "', '", SJID, "')"].
+
+encode_config_row(SUser, SBehavour, SJID) ->
+    [", ('", SUser, "', '", SBehavour, "', '", SJID, "')"].
+
+sql_transaction_map(LServer, Queries) ->
+    AtomicF = fun() ->
+        [ejabberd_odbc:sql_query(LServer, Query) || Query <- Queries]
+    end,
+    ejabberd_odbc:sql_transaction(LServer, AtomicF).
+   
+    
 
 archive_message(LServer, SUser, BareSJID, SResource, Direction, FromSJID, SData) ->
     Result =
