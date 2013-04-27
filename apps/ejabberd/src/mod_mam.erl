@@ -271,17 +271,17 @@ result_set(FirstId, LastId, FirstIndexI, CountI) ->
     %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
     FirstEl = [#xmlelement{name = <<"first">>,
                            attrs = [{<<"index">>, integer_to_list(FirstIndexI)}],
-                           children = [{xmlcdata, FirstId}]
+                           children = [#xmlcdata{content = FirstId}]
                           }
                || FirstId =/= undefined],
     LastEl = [#xmlelement{name = <<"last">>,
                            attrs = [],
-                           children = [{xmlcdata, LastId}]
+                           children = [#xmlcdata{content = LastId}]
                           }
                || LastId =/= undefined],
     CountEl = #xmlelement{
             name = <<"count">>,
-            children = [{xmlcdata, integer_to_list(CountI)}]},
+            children = [#xmlcdata{content = integer_to_list(CountI)}]},
      #xmlelement{
         name = <<"set">>,
         attrs = [{<<"xmlns">>, rsm_ns_binary()}],
