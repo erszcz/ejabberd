@@ -19,8 +19,10 @@
 %% ----------------------------------------------------------------------
 %% XMPP types
 -type server_hostname() :: binary().
+-type literal_username() :: binary().
 -type escaped_username() :: binary().
 -type escaped_jid() :: binary().
+-type literal_jid() :: binary().
 -type escaped_resource() :: binary().
 -type elem() :: #xmlelement{}.
 -type jid() :: tuple().
@@ -30,6 +32,7 @@
 %% Other types
 -type filter() :: iolist().
 -type escaped_message_id() :: binary().
+-type archive_behaviour_bin() :: binary(). % <<"roster">> | <<"always">> | <<"newer">>.
 
 %% ----------------------------------------------------------------------
 %% Constants
@@ -50,6 +53,10 @@ encode_direction(outgoing) -> "O".
 encode_behaviour(<<"roster">>) -> "R";
 encode_behaviour(<<"always">>) -> "A";
 encode_behaviour(<<"newer">>)  -> "N".
+
+decode_behaviour(<<"R">>) -> <<"roster">>;
+decode_behaviour(<<"A">>) -> <<"always">>;
+decode_behaviour(<<"N">>) -> <<"newer">>.
 
 %% ----------------------------------------------------------------------
 %% gen_mod callbacks
@@ -91,6 +98,18 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
     ?INFO_MSG("Parsed data~n\tDefaultMode ~p~n\tAlwaysJIDs ~p~n\tNewerJIDS ~p~n",
               [DefaultMode, AlwaysJIDs, NewerJIDs]),
     update_settings(LServer, LUser, DefaultMode, AlwaysJIDs, NewerJIDs),
+    ResultPrefsEl = result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs),
+    IQ#iq{type = result, sub_el = [ResultPrefsEl]};
+
+process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
+               _To,
+               IQ=#iq{type = get,
+                      sub_el = PrefsEl = #xmlelement{name = <<"prefs">>}}) ->
+    ?INFO_MSG("Handling mam prefs IQ~n    from ~p ~n    packet ~p.",
+              [From, IQ]),
+    {DefaultMode, AlwaysJIDs, NewerJIDs} = get_prefs(LServer, LUser, <<"always">>),
+    ?INFO_MSG("Extracted data~n\tDefaultMode ~p~n\tAlwaysJIDs ~p~n\tNewerJIDS ~p~n",
+              [DefaultMode, AlwaysJIDs, NewerJIDs]),
     ResultPrefsEl = result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs),
     IQ#iq{type = result, sub_el = [ResultPrefsEl]};
     
@@ -394,7 +413,7 @@ query_behaviour(LServer, SUser, SJID, BareSJID) ->
 update_settings(LServer, LUser, DefaultMode, AlwaysJIDs, NewerJIDs) ->
     SUser = ejabberd_odbc:escape(LUser),
     DelQuery = ["DELETE FROM mam_config WHERE local_username = '", SUser, "'"],
-    InsQuery = ["INSERT INTO mam_config(local_username, remote_jid, behaviour) "
+    InsQuery = ["INSERT INTO mam_config(local_username, behaviour, remote_jid) "
        "VALUES ", encode_first_config_row(SUser, encode_behaviour(DefaultMode), ""),
        [encode_config_row(SUser, "A", ejabberd_odbc:escape(JID))
         || JID <- AlwaysJIDs],
@@ -417,8 +436,35 @@ sql_transaction_map(LServer, Queries) ->
         [ejabberd_odbc:sql_query(LServer, Query) || Query <- Queries]
     end,
     ejabberd_odbc:sql_transaction(LServer, AtomicF).
-   
-    
+
+%% @doc Load settings from the database.
+-spec get_prefs(LServer, LUser, GlobalDefaultMode) -> Result when
+    LServer     :: server_hostname(),
+    LUser       :: literal_username(),
+    DefaultMode :: archive_behaviour_bin(),
+    GlobalDefaultMode :: archive_behaviour_bin(),
+    Result      :: {DefaultMode, AlwaysJIDs, NewerJIDs},
+    AlwaysJIDs  :: [literal_jid()],
+    NewerJIDs   :: [literal_jid()].
+get_prefs(LServer, LUser, GlobalDefaultMode) ->
+    SUser = ejabberd_odbc:escape(LUser),
+    {selected, _ColumnNames, Rows} =
+    ejabberd_odbc:sql_query(
+      LServer,
+      ["SELECT remote_jid, behaviour "
+       "FROM mam_config "
+       "WHERE local_username='", SUser, "'"]),
+    decode_prefs_rows(Rows, GlobalDefaultMode, [], []).
+
+decode_prefs_rows([{<<>>, Behavour}|Rows], _DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    decode_prefs_rows(Rows, decode_behaviour(Behavour), AlwaysJIDs, NewerJIDs);
+decode_prefs_rows([{JID, <<"A">>}|Rows], DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    decode_prefs_rows(Rows, DefaultMode, [JID|AlwaysJIDs], NewerJIDs);
+decode_prefs_rows([{JID, <<"N">>}|Rows], DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    decode_prefs_rows(Rows, DefaultMode, AlwaysJIDs, [JID|NewerJIDs]);
+decode_prefs_rows([], DefaultMode, AlwaysJIDs, NewerJIDs) ->
+    {DefaultMode, AlwaysJIDs, NewerJIDs}.
+
 
 archive_message(LServer, SUser, BareSJID, SResource, Direction, FromSJID, SData) ->
     Result =
