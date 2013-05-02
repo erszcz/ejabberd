@@ -125,12 +125,6 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
     Start = maybe_unix_timestamp(xml:get_path_s(QueryEl, [{elem, <<"start">>}, cdata])),
     End   = maybe_unix_timestamp(xml:get_path_s(QueryEl, [{elem, <<"end">>}, cdata])),
     RSM   = jlib:rsm_decode(QueryEl),
-    %% #rsm_in{
-    %%    max = non_neg_integer() | undefined,
-    %%    direction = before | aft | undefined,
-    %%    %% id is empty, if cdata does not exists.
-    %%    id = binary() | undefined,
-    %%    index = non_neg_integer() | undefined}
     %% Filtering by contact.
     With  = xml:get_path_s(QueryEl, [{elem, <<"with">>}, cdata]),
     {WithSJID, WithSResource} =
@@ -306,7 +300,7 @@ result(QueryID, MessageUID) ->
 result_set(FirstId, LastId, FirstIndexI, CountI) ->
     %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
     FirstEl = [#xmlelement{name = <<"first">>,
-                           attrs = [{<<"index">>, integer_to_list(FirstIndexI)}],
+                           attrs = [{<<"index">>, integer_to_binary(FirstIndexI)}],
                            children = [#xmlcdata{content = FirstId}]
                           }
                || FirstId =/= undefined],
@@ -317,7 +311,7 @@ result_set(FirstId, LastId, FirstIndexI, CountI) ->
                || LastId =/= undefined],
     CountEl = #xmlelement{
             name = <<"count">>,
-            children = [#xmlcdata{content = integer_to_list(CountI)}]},
+            children = [#xmlcdata{content = integer_to_binary(CountI)}]},
      #xmlelement{
         name = <<"set">>,
         attrs = [{<<"xmlns">>, rsm_ns_binary()}],
@@ -687,3 +681,7 @@ get_one_of_path(Elem, [H|T], Def) ->
     end;
 get_one_of_path(_Elem, [], Def) ->
     Def.
+
+
+integer_to_binary(I) when is_integer(I) ->
+    list_to_binary(integer_to_list(I)).
