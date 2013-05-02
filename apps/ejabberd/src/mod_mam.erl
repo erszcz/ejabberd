@@ -681,7 +681,3 @@ get_one_of_path(Elem, [H|T], Def) ->
     end;
 get_one_of_path(_Elem, [], Def) ->
     Def.
-
-
-integer_to_binary(I) when is_integer(I) ->
-    list_to_binary(integer_to_list(I)).
