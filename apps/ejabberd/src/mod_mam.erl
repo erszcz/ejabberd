@@ -24,7 +24,7 @@
 -type escaped_jid() :: binary().
 -type literal_jid() :: binary().
 -type escaped_resource() :: binary().
--type elem() :: #xmlelement{}.
+-type elem() :: #xmlel{}.
 -type jid() :: tuple().
 
 
@@ -91,7 +91,7 @@ stop(Host) ->
 process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
                _To,
                IQ=#iq{type = set,
-                      sub_el = PrefsEl = #xmlelement{name = <<"prefs">>}}) ->
+                      sub_el = PrefsEl = #xmlel{name = <<"prefs">>}}) ->
     ?INFO_MSG("Handling mam prefs IQ~n    from ~p ~n    packet ~p.",
               [From, IQ]),
     {DefaultMode, AlwaysJIDs, NewerJIDs} = parse_prefs(PrefsEl),
@@ -104,7 +104,7 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
 process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
                _To,
                IQ=#iq{type = get,
-                      sub_el = PrefsEl = #xmlelement{name = <<"prefs">>}}) ->
+                      sub_el = PrefsEl = #xmlel{name = <<"prefs">>}}) ->
     ?INFO_MSG("Handling mam prefs IQ~n    from ~p ~n    packet ~p.",
               [From, IQ]),
     {DefaultMode, AlwaysJIDs, NewerJIDs} = get_prefs(LServer, LUser, <<"always">>),
@@ -116,7 +116,7 @@ process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
 process_mam_iq(From=#jid{luser = LUser, lserver = LServer},
                To,
                IQ=#iq{type = get,
-                      sub_el = QueryEl = #xmlelement{name = <<"query">>}}) ->
+                      sub_el = QueryEl = #xmlel{name = <<"query">>}}) ->
     ?INFO_MSG("Handling mam IQ~n    from ~p ~n    to ~p~n    packet ~p.",
               [From, To, IQ]),
     QueryID = xml:get_tag_attr_s(<<"queryid">>, QueryEl),
@@ -241,8 +241,8 @@ handle_package(Dir,
 
 %% @doc Check, that the stanza is a message with body.
 %% Servers SHOULD NOT archive messages that do not have a <body/> child tag.
--spec is_complete_message(Packet::#xmlelement{}) -> boolean().
-is_complete_message(Packet=#xmlelement{name = <<"message">>}) ->
+-spec is_complete_message(Packet::#xmlel{}) -> boolean().
+is_complete_message(Packet=#xmlel{name = <<"message">>}) ->
     case xml:get_tag_attr_s(<<"type">>, Packet) of
     Type when Type == <<"">>;
               Type == <<"normal">>;
@@ -263,14 +263,14 @@ is_complete_message(_) -> false.
                    MessageUID::term(), DateTime::calendar:datetime(), FromJID::jid()) ->
         Wrapper::elem().
 wrap_message(Packet, QueryID, MessageUID, DateTime, FromJID) ->
-    #xmlelement{
+    #xmlel{
         name = <<"message">>,
         attrs = [],
         children = [result(QueryID, MessageUID), forwarded(Packet, DateTime, FromJID)]}.
 
 -spec forwarded(elem(), calendar:datetime(), jid()) -> elem().
 forwarded(Packet, DateTime, FromJID) ->
-    #xmlelement{
+    #xmlel{
         name = <<"forwarded">>,
         attrs = [{<<"xmlns">>, <<"urn:xmpp:forward:0">>}],
         children = [delay(DateTime, FromJID), Packet]}.
@@ -283,7 +283,7 @@ delay(DateTime, FromJID) ->
 %% @doc This element will be added in each forwarded message.
 result(QueryID, MessageUID) ->
     %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
-    #xmlelement{
+    #xmlel{
         name = <<"result">>,
         attrs = [{<<"xmlns">>, mam_ns_binary()},
                  {<<"queryid">>, QueryID},
@@ -299,26 +299,25 @@ result(QueryID, MessageUID) ->
     CountI      :: non_neg_integer().
 result_set(FirstId, LastId, FirstIndexI, CountI) ->
     %% <result xmlns='urn:xmpp:mam:tmp' queryid='f27' id='28482-98726-73623' />
-    FirstEl = [#xmlelement{name = <<"first">>,
-                           attrs = [{<<"index">>, integer_to_binary(FirstIndexI)}],
-                           children = [#xmlcdata{content = FirstId}]
-                          }
+    FirstEl = [#xmlel{name = <<"first">>,
+                      attrs = [{<<"index">>, integer_to_binary(FirstIndexI)}],
+                      children = [#xmlcdata{content = FirstId}]
+                     }
                || FirstId =/= undefined],
-    LastEl = [#xmlelement{name = <<"last">>,
-                           attrs = [],
-                           children = [#xmlcdata{content = LastId}]
-                          }
+    LastEl = [#xmlel{name = <<"last">>,
+                     children = [#xmlcdata{content = LastId}]
+                    }
                || LastId =/= undefined],
-    CountEl = #xmlelement{
+    CountEl = #xmlel{
             name = <<"count">>,
             children = [#xmlcdata{content = integer_to_binary(CountI)}]},
-     #xmlelement{
+     #xmlel{
         name = <<"set">>,
         attrs = [{<<"xmlns">>, rsm_ns_binary()}],
         children = FirstEl ++ LastEl ++ [CountEl]}.
 
 result_query(SetEl) ->
-     #xmlelement{
+     #xmlel{
         name = <<"query">>,
         attrs = [{<<"xmlns">>, mam_ns_binary()}],
         children = [SetEl]}.
@@ -329,19 +328,18 @@ result_query(SetEl) ->
     NewerJIDs   :: [binary()],
     ResultPrefsEl :: elem().
 result_prefs(DefaultMode, AlwaysJIDs, NewerJIDs) ->
-    AlwaysEl = #xmlelement{name = <<"always">>,
-                           children = encode_jids(AlwaysJIDs)},
-    NewerEl  = #xmlelement{name = <<"newer">>,
-                           children = encode_jids(NewerJIDs)},
-    #xmlelement{
+    AlwaysEl = #xmlel{name = <<"always">>,
+                      children = encode_jids(AlwaysJIDs)},
+    NewerEl  = #xmlel{name = <<"newer">>,
+                      children = encode_jids(NewerJIDs)},
+    #xmlel{
        name = <<"prefs">>,
        attrs = [{<<"xmlns">>,mam_ns_binary()}, {<<"default">>, DefaultMode}],
        children = [AlwaysEl, NewerEl]
     }.
 
 encode_jids(JIDs) ->
-    [#xmlelement{name = <<"jid">>,
-                 children = [#xmlcdata{content = JID}]}
+    [#xmlel{name = <<"jid">>, children = [#xmlcdata{content = JID}]}
      || JID <- JIDs].
 
 
@@ -350,7 +348,7 @@ encode_jids(JIDs) ->
     DefaultMode :: binary(),
     AlwaysJIDs  :: [binary()],
     NewerJIDs   :: [binary()].
-parse_prefs(El=#xmlelement{name = <<"prefs">>, attrs = Attrs}) ->
+parse_prefs(El=#xmlel{name = <<"prefs">>, attrs = Attrs}) ->
     {value, Default} = xml:get_attr(<<"default">>, Attrs),
     AlwaysJIDs = parse_jid_list(El, <<"always">>),
     NewerJIDs  = parse_jid_list(El, <<"newer">>),
@@ -359,7 +357,7 @@ parse_prefs(El=#xmlelement{name = <<"prefs">>, attrs = Attrs}) ->
 parse_jid_list(El, Name) ->
     case xml:get_subtag(El, Name) of
         false -> [];
-        #xmlelement{children = JIDEls} ->
+        #xmlel{children = JIDEls} ->
             [xml:get_tag_cdata(JIDEl) || JIDEl <- JIDEls]
     end.
 
