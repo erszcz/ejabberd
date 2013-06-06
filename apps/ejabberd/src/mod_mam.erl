@@ -375,8 +375,8 @@ is_jid_in_user_roster(LServer, LUser, JID) ->
 
 behaviour(LServer, SUser, SJID, BareSJID) ->
     case query_behaviour(LServer, SUser, SJID, BareSJID) of
-        {selected, ["behaviour"], [{Behavour}]} ->
-            case Behavour of
+        {selected, ["behaviour"], [{Behaviour}]} ->
+            case Behaviour of
                 "A" -> always;
                 "N" -> never;
                 "R" -> roster
@@ -417,11 +417,11 @@ update_settings(LServer, LUser, DefaultMode, AlwaysJIDs, NeverJIDs) ->
     ?INFO_MSG("update_settings query returns ~p and ~p", [DelResult, InsResult]),
     ok.
 
-encode_first_config_row(SUser, SBehavour, SJID) ->
-    ["('", SUser, "', '", SBehavour, "', '", SJID, "')"].
+encode_first_config_row(SUser, SBehaviour, SJID) ->
+    ["('", SUser, "', '", SBehaviour, "', '", SJID, "')"].
 
-encode_config_row(SUser, SBehavour, SJID) ->
-    [", ('", SUser, "', '", SBehavour, "', '", SJID, "')"].
+encode_config_row(SUser, SBehaviour, SJID) ->
+    [", ('", SUser, "', '", SBehaviour, "', '", SJID, "')"].
 
 sql_transaction_map(LServer, Queries) ->
     AtomicF = fun() ->
@@ -448,8 +448,8 @@ get_prefs(LServer, LUser, GlobalDefaultMode) ->
        "WHERE local_username='", SUser, "'"]),
     decode_prefs_rows(Rows, GlobalDefaultMode, [], []).
 
-decode_prefs_rows([{<<>>, Behavour}|Rows], _DefaultMode, AlwaysJIDs, NeverJIDs) ->
-    decode_prefs_rows(Rows, decode_behaviour(Behavour), AlwaysJIDs, NeverJIDs);
+decode_prefs_rows([{<<>>, Behaviour}|Rows], _DefaultMode, AlwaysJIDs, NeverJIDs) ->
+    decode_prefs_rows(Rows, decode_behaviour(Behaviour), AlwaysJIDs, NeverJIDs);
 decode_prefs_rows([{JID, <<"A">>}|Rows], DefaultMode, AlwaysJIDs, NeverJIDs) ->
     decode_prefs_rows(Rows, DefaultMode, [JID|AlwaysJIDs], NeverJIDs);
 decode_prefs_rows([{JID, <<"N">>}|Rows], DefaultMode, AlwaysJIDs, NeverJIDs) ->
