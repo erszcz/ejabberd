@@ -1206,89 +1206,21 @@ handle_sync_event(_Event, _From, StateName,
 code_change(_OldVsn, StateName, StateData, _Extra) ->
     {ok, StateName, StateData}.
 
-handle_presence(<<"probe">>, From, To, State) ->
-    case has_to_subscription(From) of
-	true ->
-	    State;
-	false ->
-	    case (?SETS):is_element(LFrom, State#state.pres_f) of
-		true ->
-		    A = (?SETS):add_element(LFrom, State#state.pres_a),
-		    State#state{pres_a = A};
-		false ->
-		    case (?SETS):is_element(LBFrom, State#state.pres_f) of
-			true ->
-			    A = (?SETS):add_element(LBFrom, State#state.pres_a),
-			    State#state{pres_a = A};
-			false ->
-			    State
-		    end
-	    end
-    end,
-    process_presence_probe(From, To, NewStateData),
-    {false, Attrs, NewStateData};
-
-handle_presence(<<"error">>, _, _, State) ->
-    NewA = remove_element(jlib:jid_tolower(From), State#state.pres_a),
-    {true, Attrs, State#state{pres_a = NewA}};
-
-handle_presence(<<"subscribe">>, From, To, State) ->
-    SRes = is_privacy_allow(State, From, To, Packet, in),
-    {SRes, Attrs, State};
-
-handle_presence(<<"subscribed">>, From, To, State) ->
-    SRes = is_privacy_allow(State, From, To, Packet, in),
-    {SRes, Attrs, State};
-
-handle_presence(<<"unsubscribe">>, From, To, State) ->
-    SRes = is_privacy_allow(State, From, To, Packet, in),
-    {SRes, Attrs, State};
-
-handle_presence(<<"unsubscribed">>, From, To, State) ->
-    SRes = is_privacy_allow(State, From, To, Packet, in),
-    {SRes, Attrs, State};
-
-handle_presence(_Type, From, To, State) ->
-    case privacy_check_packet(State, From, To, Packet, in) of
-	allow ->
-	    case has_to_subscription(From) of
-		true ->
-		    {true, Attrs, State};
-		false ->
-		    case (?SETS):is_element(LFrom, State#state.pres_f) of
-			true ->
-			    A = (?SETS):add_element(LFrom, State#state.pres_a),
-			    {true, Attrs, State#state{pres_a = A}};
-			false ->
-			    case (?SETS):is_element(LBFrom, State#state.pres_f)
-			    of
-				true ->
-				    A = (?SETS):add_element(LBFrom,
-							    State#state.pres_a),
-				    {true, Attrs, State#state{pres_a = A}};
-				false ->
-				    {true, Attrs, State}
-			    end
-		    end
-	    end;
-	deny ->
-	    {false, Attrs, State}
-    end.
 
 handle_route_info(#xmlel{name = <<"presence">>, attrs = Attrs} = Packet,
-		  From, To, StateData) ->
+		  From, To, State) ->
     State = ejabberd_hooks:run_fold(c2s_presence_in,
-				    StateData#state.server,
-				    StateData,
+				    State#state.server,
+				    State,
 				    [{From, To, Packet}]),
-    handle_presence(xml:get_attr_s(<<"type">>, Attrs));
+    handle_presence(xml:get_attr_s(<<"type">>, Attrs), From, To, Packet, State);
 
 handle_route_info(#xmlel{name = <<"iq">>, attrs = Attrs} = Packet,
 		  From, To, StateData) ->
     IQ = jlib:iq_query_info(Packet),
     case IQ of
 	#iq{xmlns = ?NS_LAST} ->
-	    IsAllowed = (has_from_subscription(From)
+	    IsAllowed = (has_from_subscription(From, StateData)
 			 andalso
 			 is_privacy_allow(StateData,
 					  To, From,
@@ -1336,24 +1268,100 @@ handle_route_info(#xmlel{name = <<"message">>, attrs = Attrs} = Packet,
 handle_route_info(#xmlel{attrs = Attrs}, _, _, StateData) ->
     {true, Attrs, StateData}.
 
+
+handle_presence(<<"probe">>, From, To, #xmlel{attrs = Attrs}, State) ->
+    NewState = subscribe_to_my_presence(From, State),
+    process_presence_probe(From, To, NewState),
+    {false, Attrs, NewState};
+
+handle_presence(<<"error">>, From, _, #xmlel{attrs = Attrs}, State) ->
+    NewA = remove_element(jlib:jid_tolower(From), State#state.pres_a),
+    {true, Attrs, State#state{pres_a = NewA}};
+
+handle_presence(<<"subscribe">>, From, To,
+		#xmlel{attrs = Attrs} = Packet, State) ->
+    SRes = is_privacy_allow(State, From, To, Packet, in),
+    {SRes, Attrs, State};
+
+handle_presence(<<"subscribed">>, From, To,
+		#xmlel{attrs = Attrs} = Packet, State) ->
+    SRes = is_privacy_allow(State, From, To, Packet, in),
+    {SRes, Attrs, State};
+
+handle_presence(<<"unsubscribe">>, From, To,
+		#xmlel{attrs = Attrs} = Packet, State) ->
+    SRes = is_privacy_allow(State, From, To, Packet, in),
+    {SRes, Attrs, State};
+
+handle_presence(<<"unsubscribed">>, From, To,
+		#xmlel{attrs = Attrs} = Packet, State) ->
+    SRes = is_privacy_allow(State, From, To, Packet, in),
+    {SRes, Attrs, State};
+
+handle_presence(_Type, From, To, #xmlel{attrs = Attrs} = Packet, State) ->
+    case privacy_check_packet(State, From, To, Packet, in) of
+	allow ->
+	    NewState = subscribe_to_my_presence(From, State),
+	    {true, Attrs, NewState};
+	deny ->
+	    {false, Attrs, State}
+    end.
+
+
+subscribe_to_my_presence(JID, State) ->
+    LJID = jlib:jid_tolower(JID),
+    LBJID = jlib:jid_remove_resource(JID),
+    case has_to_subscription({LJID, LBJID}, State) of
+	true ->
+	    State;
+	false ->
+	    case maybe_subscribe_to_my_presence(LJID, State) of
+		{true, NewState} ->
+		    NewState;
+		false ->
+		    case maybe_subscribe_to_my_presence(LBJID, State)
+		    of
+			{true, NewState} ->
+			    NewState;
+			false ->
+			    State
+		    end
+	    end
+    end.
+
+
+-spec maybe_subscribe_to_my_presence(ljid(), #state{}) -> false |
+							  {true, #state{}}.
+maybe_subscribe_to_my_presence(FromLJID, State) ->
+    case (?SETS):is_element(FromLJID, State#state.pres_f) of
+	false -> false;
+	true ->
+	    A = (?SETS):add_element(FromLJID, State#state.pres_a),
+	    {true, State#state{pres_a = A}}
+    end.
+
 presence() ->
     #xmlel{name = <<"presence">>,
 	   attrs = [],
 	   children = []}.
 
-has_from_subscription(From) ->
-    LFrom = jlib:jid_tolower(From),
-    LBFrom = jlib:jid_remove_resource(LFrom),
-    (?SETS):is_element(LFrom, StateData#state.pres_f)
+has_from_subscription({LFrom, LBFrom}, State) ->
+    (?SETS):is_element(LFrom, State#state.pres_f)
     orelse
-    (?SETS):is_element(LBFrom, StateData#state.pres_f).
-
-has_to_subscription(From) ->
+    (?SETS):is_element(LBFrom, State#state.pres_f);
+has_from_subscription(From, State) ->
     LFrom = jlib:jid_tolower(From),
     LBFrom = jlib:jid_remove_resource(LFrom),
+    has_from_subscription({LFrom, LBFrom}, State).
+
+has_to_subscription({LFrom, LBFrom}, State) ->
     (?SETS):is_element(LFrom, State#state.pres_a)
     orelse
-    (?SETS):is_element(LBFrom, State#state.pres_a).
+    (?SETS):is_element(LBFrom, State#state.pres_a);
+has_to_subscription(From, State) ->
+    LFrom = jlib:jid_tolower(From),
+    LBFrom = jlib:jid_remove_resource(LFrom),
+    has_to_subscription({LFrom, LBFrom}, State).
 
 
 %%----------------------------------------------------------------------
@@ -1423,10 +1431,9 @@ handle_info({route, _From, _To, {broadcast, Data}},
             fsm_next_state(StateName, StateData)
     end;
 %% Process Packets that are to be send to the user
-handle_info({route, From, To,
-             #xmlel{name = Name, attrs = Attrs, children = Els} = Packet},
+handle_info({route, From, To, #xmlel{name = Name, children = Els} = Packet},
             StateName, StateData) ->
-    {Pass, NewAttrs, NewState} = handle_route_info(),
+    {Pass, NewAttrs, NewState} = handle_route_info(Packet, From, To, StateData),
     if
 	Pass == exit ->
 	    %% When Pass == exit, NewState contains a string instead of a #state{}
